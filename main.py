@@ -1,11 +1,26 @@
 import pandas as pd
 import numpy as np
-import nltk
 import re
 from nltk.corpus import stopwords
 import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import Counter
+import os
+from nltk.tokenize import word_tokenize
+from nltk.stem.porter import PorterStemmer
+from wordcloud import WordCloud
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import GridSearchCV
+from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import SGDClassifier
+from sklearn.svm import LinearSVC
+from sklearn.ensemble import BaggingClassifier
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_curve
+from sklearn.metrics import classification_report
+from sklearn.model_selection import cross_val_score
 
 
 class MovieDS:
@@ -33,6 +48,11 @@ class MovieDS:
         plt.xticks([])
         plt.xlim(-0.5, 2)
         plt.legend()
+        # if not os.path.exists(r'C:\Users\slipn\PycharmProjects\NLP_NN\results'):
+        #    os.makedirs(r'C:\Users\slipn\PycharmProjects\NLP_NN\results')
+        # else:
+        #    pass
+        plt.savefig('results/classes_dist.png')
         plt.show()
         return df
 
@@ -225,19 +245,177 @@ class MovieDS:
                     quantity.append(number)
             return words, quantity
 
+        # Positive
         plt.figure(figsize=(16, 6))
         x, y = common_words(positive_counter(df))
         sns.barplot(x=x, y=y)
-        plt.title('Positive words popularity top 50 popularity')
+        plt.title('Positive words popularity')
+        plt.savefig('results/positive_words.png')
         plt.show()
 
+        # Negative
         plt.figure(figsize=(16, 6))
         x, y = common_words(negative_counter(df))
         sns.barplot(x=x, y=y)
         plt.title('Negative words popularity')
+        plt.savefig('results/negative_words.png')
+        plt.show()
+
+    def stemming_wc(self, df):
+        ###Stemming
+        stemmer = PorterStemmer()
+
+        def film_stemmer(row):
+            text = " ".join([stemmer.stem(i) for i in row])
+            return text
+
+        df['stem_tokens'] = df['review'].map(word_tokenize)
+        df['stem_tokens'] = df['stem_tokens'].map(lambda x: film_stemmer(x))
+        df['stem_tokens'].head(20)
+
+        # positive = []
+        # for i in df[df.sentiment == 1].stem_tokens.str.split():
+        #    for j in i:
+        #        positive.append(j)
+
+        # negative = []
+        # for i in df[df.sentiment == 0].stem_tokens.str.split():
+        #    for j in i:
+        #        negative.append(j)
+
+        # positive = " ".join(map(str, positive))
+        # negative = " ".join(map(str, negative))
+
+        # Positive
+        # wordcloud = WordCloud(width=2000, max_words=100, height=1000, max_font_size=200).generate(positive)
+        # plt.figure(figsize=(12, 10))
+        # plt.imshow(wordcloud, interpolation='bilinear')
+        # plt.axis("off")
+        # plt.title('Positive words WORDCLOUD')
+        # plt.savefig('results/wordcloud_pos.png')
+        # plt.show()
+
+        # Negative
+        # wordcloud = WordCloud(width=2000, max_words=100, height=1000, max_font_size=200).generate(negative)
+        # plt.figure(figsize=(12, 10))
+        # plt.imshow(wordcloud, interpolation='bilinear')
+        # plt.axis("off")
+        # plt.title('Negative words WORDCLOUD')
+        # plt.savefig('results/wordcloud_neg.png')
+        # plt.show()
+
+        return df
+
+    def train_test_split(self, df):
+        x = df['stem_tokens'].copy()
+        y = df['sentiment'].values
+        x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.20, random_state=0)
+        tfidf = TfidfVectorizer(min_df=25, ngram_range=(1, 2), stop_words='english', max_features=10000,
+                                sublinear_tf=True, lowercase=True)
+        x_train = tfidf.fit_transform(x_train)
+        x_test = tfidf.transform(x_test)
+
+        return x_train, y_train, x_test, y_test
+
+    def liner_model(self, x_train, y_train, x_test, y_test):
+        # Defining mdels
+        log_reg_st = LogisticRegression()  # LogReg
+        sgdclass_st = SGDClassifier()  # SGD
+        # SVM block
+        svm_st = LinearSVC()  # SVM
+
+        # Hyperparams to tune
+        # Log_reg
+        log_reg_params = {'penalty': ['l1', 'l2'],
+                          'solver': ['lbfgs', 'liblinear'],
+                          'C': [0.01, 0.1, 1, 10]}
+        # SGD
+        sgd_params = {'penalty': ['l1', 'l2', 'elasticnet'],
+                      'loss': ['log', 'modified_huber'],
+                      'alpha': [0.0001, 0.01, 1, 10, 100]}
+        # Hyperparams to tune
+        # SVM
+        svm_params = {'penalty': ['l1', 'l2'], 'loss': ['hinge', 'squared_hinge'], 'C': [0.01, 1, 10]}
+
+        # List of models with the names
+        models = [log_reg_st, sgdclass_st, svm_st]
+        model_params = [log_reg_params, sgd_params, svm_params]
+        modelnames = ['Logistic Regression', 'SGD', 'SVM']
+
+        # Loop for each model
+        tuned_models = []
+        for model, params, modelname in zip(models, model_params, modelnames):
+            print('Results for {}'.format(modelname))
+            grid = GridSearchCV(estimator=model, param_grid=params, scoring='roc_auc', verbose=3, n_jobs=-1, cv=5)
+            grid_result = grid.fit(x_train, y_train)
+            print('Best Score for', modelname, grid_result.best_score_)
+            print('Best Params for', modelname, grid_result.best_params_)
+            model.set_params(**grid_result.best_params_)
+            tuned_models.append(model)
+
+            model = BaggingClassifier(base_estimator=model)
+
+            model.fit(x_train, y_train)
+            y_pred = model.predict(x_test)
+            model.score(x_train, y_train)
+            model.score(x_test, y_test)
+
+            cm = confusion_matrix(y_test, y_pred)
+            cm_matrix = pd.DataFrame(data=cm, columns=['Actual Positive:1', 'Actual Negative:0'],
+                                     index=['Predict Positive:1', 'Predict Negative:0'])
+
+            plt.figure(figsize=(14, 7))
+            sns.heatmap(cm_matrix, annot=True, fmt='d', cmap='icefire').set_title('Confusion matrix')
+
+            print(classification_report(y_test, y_pred))
+
+            cv_score = cross_val_score(model, x_train, y_train, cv=5, scoring='roc_auc')
+            cv_score.mean()
+
+            y_proba = model.predict_proba(x_test)[:, 1]
+            roc_auc_score(y_test, y_proba)
+
+            logit_roc_auc = roc_auc_score(y_test, model.predict_proba(x_test)[:, 1])
+            fpr, tpr, thresholds = roc_curve(y_test, model.predict_proba(x_test)[:, 1])
+            plt.figure(figsize=(15, 10))
+            plt.plot(fpr, tpr, label='{modelname} (area = {logit_roc_auc})'.format(modelname=modelname,
+                                                                                   logit_roc_auc=np.round(logit_roc_auc,
+                                                                                                          decimals=2)))
+            plt.plot([0, 1], [0, 1], 'r--')
+            plt.xlim([0.0, 1.0])
+            plt.ylim([0.0, 1.05])
+            plt.xlabel('False Positive Rate', fontsize=15)
+            plt.ylabel('True Positive Rate', fontsize=15)
+            plt.title('Receiver operating characteristic', fontsize=15)
+            plt.legend(loc="lower right", fontsize=15)
+            plt.savefig('results/ROC_AUC_for_{}.png'.format(modelname))
+            plt.show()
+            print(150 * "-")
+
+        plt.figure(figsize=(20, 15))
+        for model, modelname in zip(tuned_models, modelnames):
+            model = BaggingClassifier(base_estimator=model)
+            model.fit(x_train, y_train)
+            logit_roc_auc = roc_auc_score(y_test, model.predict_proba(x_test)[:, 1])
+            fpr, tpr, thresholds = roc_curve(y_test, model.predict_proba(x_test)[:, 1])
+
+            plt.plot(fpr, tpr, label=modelname + '(area = %0.2f)' % logit_roc_auc)
+
+            plt.plot([0, 1], [0, 1], 'r--')
+            plt.xlim([0.0, 1.0])
+            plt.ylim([0.0, 1.05])
+
+        plt.xlabel('False Positive Rate', fontsize=15)
+        plt.ylabel('True Positive Rate', fontsize=15)
+        plt.title('Receiver operating characteristic comparison after STEMMING')
+        plt.legend(loc="lower right", fontsize=15)
+        plt.savefig('results/ROC_AUC_Comparison.png')
         plt.show()
 
 
 dataset = MovieDS('LargeMovieReviewDataset.csv')
 prep_dataset = dataset.prep(dataset.eda())  # Storing preprocessed dataset after EDA
-dataset.visualization_popular(prep_dataset)  # Visualization of popular words
+dataset.visualization_popular(prep_dataset)  # Visualization of popular words from preprocessed dataset
+stemming_data = dataset.stemming_wc(prep_dataset)
+#x_train, y_train, x_test, y_test = dataset.train_test_split(stemming_data)
+dataset.liner_model(*dataset.train_test_split(stemming_data))
