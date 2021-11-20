@@ -333,7 +333,6 @@ class MovieDS:
         sgd_params = {'penalty': ['l1', 'l2', 'elasticnet'],
                       'loss': ['log', 'modified_huber'],
                       'alpha': [0.0001, 0.01, 1, 10, 100]}
-        # Hyperparams to tune
         # SVM
         svm_params = {'penalty': ['l1', 'l2'], 'loss': ['hinge', 'squared_hinge'], 'C': [0.01, 1, 10]}
 
