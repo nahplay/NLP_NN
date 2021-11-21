@@ -451,10 +451,6 @@ class MovieDS:
             tf.keras.layers.Dense(64, activation=tf.keras.layers.LeakyReLU(alpha=0.01)),
             tf.keras.layers.Dense(1, activation='sigmoid')
         ])
-
-        #model_lstm.compile(loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
-         #                  optimizer='adam',
-         #                  metrics=[tf.keras.metrics.AUC(), 'accuracy'])#We will be checking roc_auc and accuracy
         rnn_models.append(model_lstm)
 
         model_blstm = tf.keras.Sequential([
