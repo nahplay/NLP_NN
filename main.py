@@ -22,10 +22,10 @@ from sklearn.metrics import roc_curve
 from sklearn.metrics import classification_report
 from sklearn.model_selection import cross_val_score
 import tensorflow as tf
-from tensorflow.keras import layers
-from tensorflow.keras import losses
-from tensorflow.keras import preprocessing
-from tensorflow.keras.layers.experimental.preprocessing import TextVectorization
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from gensim.models.keyedvectors import KeyedVectors
+from tensorflow.keras.layers import TextVectorization
 
 class MovieDS:
     def __init__(self, path):
@@ -311,8 +311,10 @@ class MovieDS:
         return df
 
     def train_test_split(self, df):
-        x = df['stem_tokens'].copy()
-        y = df['sentiment'].copy()
+        # x = df['stem_tokens'].copy()
+        # y = df['sentiment'].copy()
+        x = df['stem_tokens'].values
+        y = df['sentiment'].values
         x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.20, random_state=0)
 
         return x_train, y_train, x_test, y_test
@@ -414,12 +416,15 @@ class MovieDS:
         plt.savefig('results/ROC_AUC_Comparison.png')
         plt.show()
 
-    def rnn_models(self, x_train, y_train,x_test,y_test):
+    def rnn_models(self, x_train, y_train, x_test, y_test):
+
+        # Data to fit tokenizer for pretrained embeddings
+        x_train_text = x_train
+
         x_train = np.asarray(x_train)
         y_train = np.asarray(y_train)
         x_test = np.asarray(x_test)
         y_test = np.asarray(y_test)
-
 
         vectorize_layer = TextVectorization(
             #standardize=custom_standardization,
@@ -428,26 +433,29 @@ class MovieDS:
             output_sequence_length=400)
 
         vectorize_layer.adapt(x_train)
-        # Save model
-        cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath='results',
+        ## Save model
+        if not os.path.exists(r'results/checkpoints'):
+            os.makedirs(r'results/checkpoints')
+        else:
+            print('The folder already exists')
+        cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath='results/checkpoints',
                                                          save_weights_only=True,
                                                          verbose=1,
                                                          save_best_only=True)
-        # Early stopping using val_loss
+        ## Early stopping using val_loss
         early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10)
 
-
         rnn_models = []
-        rnn_names= ['LSTM 2 layers', 'BLSTM 2 layers']
+        rnn_names = ['LSTM 2 layers', 'BLSTM 2 layers']
         model_lstm = tf.keras.Sequential([
             vectorize_layer,
             tf.keras.layers.Embedding(
                 input_dim=len(vectorize_layer.get_vocabulary()),
                 output_dim=64,
                 mask_zero=True),
-            tf.keras.layers.LSTM(64,return_sequences=True),
+            tf.keras.layers.LSTM(64, return_sequences=True),
             tf.keras.layers.LSTM(64),
-            #tf.keras.layers.Dense(64, activation='relu'),
+            # tf.keras.layers.Dense(64, activation='relu'),
             tf.keras.layers.Dense(64, activation=tf.keras.layers.LeakyReLU(alpha=0.01)),
             tf.keras.layers.Dense(1, activation='sigmoid')
         ])
@@ -459,52 +467,52 @@ class MovieDS:
                 input_dim=len(vectorize_layer.get_vocabulary()),
                 output_dim=64,
                 mask_zero=True),
-            tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64,return_sequences=True)),
+            tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64, return_sequences=True)),
             tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64)),
-            #tf.keras.layers.Dense(64, activation='relu'),
+            # tf.keras.layers.Dense(64, activation='relu'),
             tf.keras.layers.Dense(64, activation=tf.keras.layers.LeakyReLU(alpha=0.01)),
             tf.keras.layers.Dense(1, activation='sigmoid')
         ])
         rnn_models.append(model_blstm)
 
-        for model in rnn_models:
+        for model, modelname in zip(rnn_models, rnn_names):
             model.compile(loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
-                               optimizer='adam',
-                               metrics=[tf.keras.metrics.AUC(), 'accuracy'])  # We will be checking roc_auc and accuracy
+                          optimizer='adam',
+                          metrics=[tf.keras.metrics.AUC(), 'accuracy'])  # We will be checking roc_auc and accuracy
             history = model.fit(x=x_train,
-                                     y=y_train,
-                                     epochs=100,
-                                     validation_data=(x_test, y_test),
-                                     batch_size=64,
-                                     callbacks=[early_stop, cp_callback]
-                                     )
-
-            # Model results visualization
-
+                                y=y_train,
+                                epochs=100,
+                                validation_data=(x_test, y_test),
+                                batch_size=64,
+                                callbacks=[early_stop, cp_callback]
+                                )
+            #
+            #    # Model results visualization
+            #
             # summarize history for accuracy
             plt.plot(history.history['accuracy'])
             plt.plot(history.history['val_accuracy'])
             plt.title('model accuracy')
             plt.ylabel('accuracy')
             plt.xlabel('epoch')
-            plt.legend(['train', 'validation'], loc='upper left')
-            plt.savefig('results/accuracy.png')
+            plt.legend(['train', 'test'], loc='upper left')
+            plt.savefig('results/accuracy_for_' + modelname + '.png')
             plt.show()
-
+            #
             # summarize history for loss
             plt.plot(history.history['loss'])
             plt.plot(history.history['val_loss'])
             plt.title('model loss')
             plt.ylabel('loss')
             plt.xlabel('epoch')
-            plt.legend(['train', 'validation'], loc='upper left')
-            plt.savefig('results/loss.png')
+            plt.legend(['train', 'test'], loc='upper left')
+            plt.savefig('results/loss_for_' + modelname + '.png')
             plt.show()
-            score = model.evaluate(x_test,y_test, verbose=0)
+            score = model.evaluate(x_test, y_test, verbose=0)
             print(f'Test loss: {score[0]} / Test accuracy: {score[1]}')
-
-
-            #Predictions
+            #
+            #
+            # Predictions
             y_pred = np.argmax(model.predict(x_test), axis=-1)
             cm = confusion_matrix(y_test, y_pred)
             disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['negative', 'positive'])
@@ -512,17 +520,127 @@ class MovieDS:
             disp.plot(ax=ax)
             plt.title('Confusion Matrix')
 
-    def get_embs(self, link):
-        path_to_downloaded_file = tf.keras.utils.get_file(
-            "flower_photos",
-            "https://storage.googleapis.com/download.tensorflow.org/example_images/flower_photos.tgz",
-            untar=True)
+        # Pretrained embeddings
+
+        # glove.42B.300d
+        def create_embedding_matrix(filepath, word_index, embedding_dim):
+            vocab_size = len(word_index) + 1  # Adding again 1 because of reserved 0 index
+            embedding_matrix = np.zeros((vocab_size, embedding_dim))
+            with open(filepath, encoding="utf8") as f:
+                for line in f:
+                    word, *vector = line.split()
+                    if word in word_index:
+                        idx = word_index[word]
+                        embedding_matrix[idx] = np.array(
+                            vector, dtype=np.float32)[:embedding_dim]
+
+            return embedding_matrix
+
+        tokenizer = Tokenizer(num_words=10000)
+        tokenizer.fit_on_texts(x_train_text)
+        x_train = tokenizer.texts_to_sequences(x_train)
+        x_test = tokenizer.texts_to_sequences(x_test)
+
+        vocab_size = len(tokenizer.word_index) + 1  # Adding 1 because of reserved 0 index
+
+        maxlen = 300
+
+        x_train = pad_sequences(x_train, padding='post', maxlen=maxlen)
+        x_test = pad_sequences(x_test, padding='post', maxlen=maxlen)
+
+        embedding_dim = 100
+        embedding_matrix_glove = create_embedding_matrix(
+            filepath='glove.42B.300d.txt',
+            word_index=tokenizer.word_index,
+            embedding_dim=embedding_dim)
+
+        glove_300 = tf.keras.Sequential([
+            tf.keras.layers.Embedding(vocab_size, embedding_dim,
+                                      weights=[embedding_matrix_glove],
+                                      input_length=maxlen,
+                                      trainable=True),
+            tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64, return_sequences=True)),
+            tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64)),
+            tf.keras.layers.Dense(64, activation=tf.keras.layers.LeakyReLU(alpha=0.01)),
+            tf.keras.layers.Dense(1, activation='sigmoid')
+        ])
+        glove_300.compile(loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
+                          optimizer='adam',
+                          metrics=[tf.keras.metrics.AUC(), 'accuracy'])
+
+        # Word2vec
+        # Recompiled into txt with the following 2 rows
+        # model = KeyedVectors.load_word2vec_format('GoogleNews-vectors-negative300.bin', binary=True)
+        # model.save_word2vec_format('GoogleNews-vectors-negative300.txt', binary=False)
+
+        embedding_matrix_word2vec = create_embedding_matrix(
+            filepath='GoogleNews-vectors-negative300.txt',
+            word_index=tokenizer.word_index,
+            embedding_dim=embedding_dim)
+        word2vec_model = tf.keras.Sequential([
+            tf.keras.layers.Embedding(vocab_size, embedding_dim,
+                                      weights=[embedding_matrix_word2vec],
+                                      input_length=maxlen,
+                                      trainable=True),
+            tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64, return_sequences=True)),
+            tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64)),
+            tf.keras.layers.Dense(64, activation=tf.keras.layers.LeakyReLU(alpha=0.01)),
+            tf.keras.layers.Dense(1, activation='sigmoid')
+        ])
+        pretrained_models = []
+        pretrained_names = ['Glove', 'Word2vec']
+        pretrained_models.append(glove_300)
+        pretrained_models.append(word2vec_model)
+
+        for model, modelname in zip(pretrained_models, pretrained_names):
+            model.compile(loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
+                          optimizer='adam',
+                          metrics=[tf.keras.metrics.AUC(), 'accuracy'])
+            history = glove_300.fit(x_train,
+                                    y_train,
+                                    epochs=100,
+                                    validation_data=(x_test, y_test),
+                                    batch_size=64,
+                                    callbacks=[early_stop, cp_callback]
+                                    )
+            # Model results visualization
+            # summarize history for accuracy
+            plt.plot(history.history['accuracy'])
+            plt.plot(history.history['val_accuracy'])
+            plt.title('model accuracy')
+            plt.ylabel('accuracy')
+            plt.xlabel('epoch')
+            plt.legend(['train', 'test'], loc='upper left')
+            plt.savefig('results/accuracy_for_' + modelname + '.png')
+            plt.show()
+            #
+            # summarize history for loss
+            plt.plot(history.history['loss'])
+            plt.plot(history.history['val_loss'])
+            plt.title('model loss')
+            plt.ylabel('loss')
+            plt.xlabel('epoch')
+            plt.legend(['train', 'test'], loc='upper left')
+            plt.savefig('results/loss_for_' + modelname + '.png')
+            plt.show()
+            score = model.evaluate(x_test, y_test, verbose=0)
+            print(f'Test loss: {score[0]} / Test accuracy: {score[1]}')
+            #
+            #
+            # Predictions
+            y_pred = np.argmax(model.predict(x_test), axis=-1)
+            cm = confusion_matrix(y_test, y_pred)
+            disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['negative', 'positive'])
+            fig, ax = plt.subplots(figsize=(15, 10))
+            disp.plot(ax=ax)
+            plt.title('Confusion Matrix')
 
 
 dataset = MovieDS('LargeMovieReviewDataset.csv')
 prep_dataset = dataset.prep(dataset.eda())  # Storing preprocessed dataset after EDA
 dataset.visualization_popular(prep_dataset)  # Visualization of popular words from preprocessed dataset
 stemming_data = dataset.stemming_wc(prep_dataset)
-#x_train, y_train, x_test, y_test = dataset.train_test_split(stemming_data)
-#dataset.liner_model(*dataset.train_test_split(stemming_data))
+# x_train, y_train, x_test, y_test = dataset.train_test_split(stemming_data)
+# dataset.liner_model(*dataset.train_test_split(stemming_data))
 dataset.rnn_models(*dataset.train_test_split(stemming_data))
+
