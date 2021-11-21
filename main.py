@@ -27,6 +27,7 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from gensim.models.keyedvectors import KeyedVectors
 from tensorflow.keras.layers import TextVectorization
 
+
 class MovieDS:
     def __init__(self, path):
         self.path = path
@@ -427,7 +428,7 @@ class MovieDS:
         y_test = np.asarray(y_test)
 
         vectorize_layer = TextVectorization(
-            #standardize=custom_standardization,
+            # standardize=custom_standardization,
             max_tokens=1000,
             output_mode='int',
             output_sequence_length=400)
@@ -475,17 +476,7 @@ class MovieDS:
         ])
         rnn_models.append(model_blstm)
 
-        for model, modelname in zip(rnn_models, rnn_names):
-            model.compile(loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
-                          optimizer='adam',
-                          metrics=[tf.keras.metrics.AUC(), 'accuracy'])  # We will be checking roc_auc and accuracy
-            history = model.fit(x=x_train,
-                                y=y_train,
-                                epochs=100,
-                                validation_data=(x_test, y_test),
-                                batch_size=64,
-                                callbacks=[early_stop, cp_callback]
-                                )
+        def model_evaluation(history, modelname):
             #
             #    # Model results visualization
             #
@@ -519,6 +510,19 @@ class MovieDS:
             fig, ax = plt.subplots(figsize=(15, 10))
             disp.plot(ax=ax)
             plt.title('Confusion Matrix')
+
+        for model, modelname in zip(rnn_models, rnn_names):
+            model.compile(loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
+                          optimizer='adam',
+                          metrics=[tf.keras.metrics.AUC(), 'accuracy'])  # We will be checking roc_auc and accuracy
+            history = model.fit(x=x_train,
+                                y=y_train,
+                                epochs=2,
+                                validation_data=(x_test, y_test),
+                                batch_size=64,
+                                callbacks=[early_stop, cp_callback]
+                                )
+            model_evaluation(history, modelname)
 
         # Pretrained embeddings
 
@@ -603,37 +607,7 @@ class MovieDS:
                                     batch_size=64,
                                     callbacks=[early_stop, cp_callback]
                                     )
-            # Model results visualization
-            # summarize history for accuracy
-            plt.plot(history.history['accuracy'])
-            plt.plot(history.history['val_accuracy'])
-            plt.title('model accuracy')
-            plt.ylabel('accuracy')
-            plt.xlabel('epoch')
-            plt.legend(['train', 'test'], loc='upper left')
-            plt.savefig('results/accuracy_for_' + modelname + '.png')
-            plt.show()
-            #
-            # summarize history for loss
-            plt.plot(history.history['loss'])
-            plt.plot(history.history['val_loss'])
-            plt.title('model loss')
-            plt.ylabel('loss')
-            plt.xlabel('epoch')
-            plt.legend(['train', 'test'], loc='upper left')
-            plt.savefig('results/loss_for_' + modelname + '.png')
-            plt.show()
-            score = model.evaluate(x_test, y_test, verbose=0)
-            print(f'Test loss: {score[0]} / Test accuracy: {score[1]}')
-            #
-            #
-            # Predictions
-            y_pred = np.argmax(model.predict(x_test), axis=-1)
-            cm = confusion_matrix(y_test, y_pred)
-            disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['negative', 'positive'])
-            fig, ax = plt.subplots(figsize=(15, 10))
-            disp.plot(ax=ax)
-            plt.title('Confusion Matrix')
+            model_evaluation(history, modelname)
 
 
 dataset = MovieDS('LargeMovieReviewDataset.csv')
@@ -643,4 +617,3 @@ stemming_data = dataset.stemming_wc(prep_dataset)
 # x_train, y_train, x_test, y_test = dataset.train_test_split(stemming_data)
 # dataset.liner_model(*dataset.train_test_split(stemming_data))
 dataset.rnn_models(*dataset.train_test_split(stemming_data))
-
