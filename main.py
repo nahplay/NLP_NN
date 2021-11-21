@@ -16,12 +16,16 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.linear_model import SGDClassifier
 from sklearn.svm import LinearSVC
 from sklearn.ensemble import BaggingClassifier
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import roc_curve
 from sklearn.metrics import classification_report
 from sklearn.model_selection import cross_val_score
-
+import tensorflow as tf
+from tensorflow.keras import layers
+from tensorflow.keras import losses
+from tensorflow.keras import preprocessing
+from tensorflow.keras.layers.experimental.preprocessing import TextVectorization
 
 class MovieDS:
     def __init__(self, path):
@@ -48,10 +52,10 @@ class MovieDS:
         plt.xticks([])
         plt.xlim(-0.5, 2)
         plt.legend()
-        # if not os.path.exists(r'C:\Users\slipn\PycharmProjects\NLP_NN\results'):
-        #    os.makedirs(r'C:\Users\slipn\PycharmProjects\NLP_NN\results')
-        # else:
-        #    pass
+        if not os.path.exists(r'results'):
+            os.makedirs(r'results')
+        else:
+            print('The folder already exists')
         plt.savefig('results/classes_dist.png')
         plt.show()
         return df
@@ -240,7 +244,7 @@ class MovieDS:
             words = []
             quantity = []
             for word, number in most[:50]:
-                if (word not in stop_words):
+                if word not in stop_words:
                     words.append(word)
                     quantity.append(number)
             return words, quantity
@@ -308,20 +312,19 @@ class MovieDS:
 
     def train_test_split(self, df):
         x = df['stem_tokens'].copy()
-        y = df['sentiment'].values
+        y = df['sentiment'].copy()
         x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.20, random_state=0)
-        tfidf = TfidfVectorizer(min_df=25, ngram_range=(1, 2), stop_words='english', max_features=10000,
-                                sublinear_tf=True, lowercase=True)
-        x_train = tfidf.fit_transform(x_train)
-        x_test = tfidf.transform(x_test)
 
         return x_train, y_train, x_test, y_test
 
     def liner_model(self, x_train, y_train, x_test, y_test):
-        # Defining mdels
+        tfidf = TfidfVectorizer(min_df=25, ngram_range=(1, 2), stop_words='english', max_features=10000,
+                                sublinear_tf=True, lowercase=True)
+        x_train = tfidf.fit_transform(x_train)
+        x_test = tfidf.transform(x_test)
+        # Defining models
         log_reg_st = LogisticRegression()  # LogReg
         sgdclass_st = SGDClassifier()  # SGD
-        # SVM block
         svm_st = LinearSVC()  # SVM
 
         # Hyperparams to tune
@@ -369,10 +372,10 @@ class MovieDS:
             print(classification_report(y_test, y_pred))
 
             cv_score = cross_val_score(model, x_train, y_train, cv=5, scoring='roc_auc')
-            cv_score.mean()
+            print('Cross-val min score', cv_score.mean())
 
             y_proba = model.predict_proba(x_test)[:, 1]
-            roc_auc_score(y_test, y_proba)
+            print('ROC_AUC:', roc_auc_score(y_test, y_proba))
 
             logit_roc_auc = roc_auc_score(y_test, model.predict_proba(x_test)[:, 1])
             fpr, tpr, thresholds = roc_curve(y_test, model.predict_proba(x_test)[:, 1])
@@ -411,10 +414,119 @@ class MovieDS:
         plt.savefig('results/ROC_AUC_Comparison.png')
         plt.show()
 
+    def rnn_models(self, x_train, y_train,x_test,y_test):
+        x_train = np.asarray(x_train)
+        y_train = np.asarray(y_train)
+        x_test = np.asarray(x_test)
+        y_test = np.asarray(y_test)
+
+
+        vectorize_layer = TextVectorization(
+            #standardize=custom_standardization,
+            max_tokens=1000,
+            output_mode='int',
+            output_sequence_length=400)
+
+        vectorize_layer.adapt(x_train)
+        # Save model
+        cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath='results',
+                                                         save_weights_only=True,
+                                                         verbose=1,
+                                                         save_best_only=True)
+        # Early stopping using val_loss
+        early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10)
+
+
+        rnn_models = []
+        rnn_names= ['LSTM 2 layers', 'BLSTM 2 layers']
+        model_lstm = tf.keras.Sequential([
+            vectorize_layer,
+            tf.keras.layers.Embedding(
+                input_dim=len(vectorize_layer.get_vocabulary()),
+                output_dim=64,
+                mask_zero=True),
+            tf.keras.layers.LSTM(64,return_sequences=True),
+            tf.keras.layers.LSTM(64),
+            #tf.keras.layers.Dense(64, activation='relu'),
+            tf.keras.layers.Dense(64, activation=tf.keras.layers.LeakyReLU(alpha=0.01)),
+            tf.keras.layers.Dense(1, activation='sigmoid')
+        ])
+
+        #model_lstm.compile(loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
+         #                  optimizer='adam',
+         #                  metrics=[tf.keras.metrics.AUC(), 'accuracy'])#We will be checking roc_auc and accuracy
+        rnn_models.append(model_lstm)
+
+        model_blstm = tf.keras.Sequential([
+            vectorize_layer,
+            tf.keras.layers.Embedding(
+                input_dim=len(vectorize_layer.get_vocabulary()),
+                output_dim=64,
+                mask_zero=True),
+            tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64,return_sequences=True)),
+            tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64)),
+            #tf.keras.layers.Dense(64, activation='relu'),
+            tf.keras.layers.Dense(64, activation=tf.keras.layers.LeakyReLU(alpha=0.01)),
+            tf.keras.layers.Dense(1, activation='sigmoid')
+        ])
+        rnn_models.append(model_blstm)
+
+        for model in rnn_models:
+            model.compile(loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
+                               optimizer='adam',
+                               metrics=[tf.keras.metrics.AUC(), 'accuracy'])  # We will be checking roc_auc and accuracy
+            history = model.fit(x=x_train,
+                                     y=y_train,
+                                     epochs=100,
+                                     validation_data=(x_test, y_test),
+                                     batch_size=64,
+                                     callbacks=[early_stop, cp_callback]
+                                     )
+
+            # Model results visualization
+
+            # summarize history for accuracy
+            plt.plot(history.history['accuracy'])
+            plt.plot(history.history['val_accuracy'])
+            plt.title('model accuracy')
+            plt.ylabel('accuracy')
+            plt.xlabel('epoch')
+            plt.legend(['train', 'validation'], loc='upper left')
+            plt.savefig('results/accuracy.png')
+            plt.show()
+
+            # summarize history for loss
+            plt.plot(history.history['loss'])
+            plt.plot(history.history['val_loss'])
+            plt.title('model loss')
+            plt.ylabel('loss')
+            plt.xlabel('epoch')
+            plt.legend(['train', 'validation'], loc='upper left')
+            plt.savefig('results/loss.png')
+            plt.show()
+            score = model.evaluate(x_test,y_test, verbose=0)
+            print(f'Test loss: {score[0]} / Test accuracy: {score[1]}')
+
+
+            #Predictions
+            y_pred = np.argmax(model.predict(x_test), axis=-1)
+            cm = confusion_matrix(y_test, y_pred)
+            disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['negative', 'positive'])
+            fig, ax = plt.subplots(figsize=(15, 10))
+            disp.plot(ax=ax)
+            plt.title('Confusion Matrix')
+
+    def get_embs(self, link):
+        path_to_downloaded_file = tf.keras.utils.get_file(
+            "flower_photos",
+            "https://storage.googleapis.com/download.tensorflow.org/example_images/flower_photos.tgz",
+            untar=True)
+
 
 dataset = MovieDS('LargeMovieReviewDataset.csv')
 prep_dataset = dataset.prep(dataset.eda())  # Storing preprocessed dataset after EDA
 dataset.visualization_popular(prep_dataset)  # Visualization of popular words from preprocessed dataset
 stemming_data = dataset.stemming_wc(prep_dataset)
 #x_train, y_train, x_test, y_test = dataset.train_test_split(stemming_data)
-dataset.liner_model(*dataset.train_test_split(stemming_data))
+#dataset.liner_model(*dataset.train_test_split(stemming_data))
+dataset.rnn_models(*dataset.train_test_split(stemming_data))
