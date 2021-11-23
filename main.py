@@ -278,36 +278,34 @@ class MovieDS:
         df['stem_tokens'] = df['stem_tokens'].map(lambda x: film_stemmer(x))
         df['stem_tokens'].head(20)
 
-        # positive = []
-        # for i in df[df.sentiment == 1].stem_tokens.str.split():
-        #    for j in i:
-        #        positive.append(j)
+        positive = []
+        for i in df[df.sentiment == 1].stem_tokens.str.split():
+           for j in i:
+               positive.append(j)
 
-        # negative = []
-        # for i in df[df.sentiment == 0].stem_tokens.str.split():
-        #    for j in i:
-        #        negative.append(j)
+        negative = []
+        for i in df[df.sentiment == 0].stem_tokens.str.split():
+           for j in i:
+               negative.append(j)
 
-        # positive = " ".join(map(str, positive))
-        # negative = " ".join(map(str, negative))
-
-        # Positive
-        # wordcloud = WordCloud(width=2000, max_words=100, height=1000, max_font_size=200).generate(positive)
-        # plt.figure(figsize=(12, 10))
-        # plt.imshow(wordcloud, interpolation='bilinear')
-        # plt.axis("off")
-        # plt.title('Positive words WORDCLOUD')
-        # plt.savefig('results/wordcloud_pos.png')
-        # plt.show()
-
-        # Negative
-        # wordcloud = WordCloud(width=2000, max_words=100, height=1000, max_font_size=200).generate(negative)
-        # plt.figure(figsize=(12, 10))
-        # plt.imshow(wordcloud, interpolation='bilinear')
-        # plt.axis("off")
-        # plt.title('Negative words WORDCLOUD')
-        # plt.savefig('results/wordcloud_neg.png')
-        # plt.show()
+        positive = " ".join(map(str, positive))
+        negative = " ".join(map(str, negative))
+        #Positive
+        wordcloud = WordCloud(width=2000, max_words=100, height=1000, max_font_size=200).generate(positive)
+        plt.figure(figsize=(12, 10))
+        plt.imshow(wordcloud, interpolation='bilinear')
+        plt.axis("off")
+        plt.title('Positive words WORDCLOUD')
+        plt.savefig('results/wordcloud_pos.png')
+        plt.show()
+        #Negative
+        wordcloud = WordCloud(width=2000, max_words=100, height=1000, max_font_size=200).generate(negative)
+        plt.figure(figsize=(12, 10))
+        plt.imshow(wordcloud, interpolation='bilinear')
+        plt.axis("off")
+        plt.title('Negative words WORDCLOUD')
+        plt.savefig('results/wordcloud_neg.png')
+        plt.show()
 
         return df
 
@@ -435,16 +433,12 @@ class MovieDS:
 
         vectorize_layer.adapt(x_train)
         ## Save model
-        if not os.path.exists(r'results/checkpoints'):
-            os.makedirs(r'results/checkpoints')
-        else:
-            print('The folder already exists')
         cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath='results/checkpoints',
                                                          save_weights_only=True,
                                                          verbose=1,
                                                          save_best_only=True)
         ## Early stopping using val_loss
-        early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10)
+        early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=50)
 
         rnn_models = []
         rnn_names = ['LSTM 2 layers', 'BLSTM 2 layers']
@@ -456,7 +450,6 @@ class MovieDS:
                 mask_zero=True),
             tf.keras.layers.LSTM(64, return_sequences=True),
             tf.keras.layers.LSTM(64),
-            # tf.keras.layers.Dense(64, activation='relu'),
             tf.keras.layers.Dense(64, activation=tf.keras.layers.LeakyReLU(alpha=0.01)),
             tf.keras.layers.Dense(1, activation='sigmoid')
         ])
@@ -470,16 +463,14 @@ class MovieDS:
                 mask_zero=True),
             tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64, return_sequences=True)),
             tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64)),
-            # tf.keras.layers.Dense(64, activation='relu'),
             tf.keras.layers.Dense(64, activation=tf.keras.layers.LeakyReLU(alpha=0.01)),
             tf.keras.layers.Dense(1, activation='sigmoid')
         ])
         rnn_models.append(model_blstm)
 
-        def model_evaluation(history, modelname):
-            #
+        def model_evaluation(history, modelname, model, x_test, y_test):
             #    # Model results visualization
-            #
+
             # summarize history for accuracy
             plt.plot(history.history['accuracy'])
             plt.plot(history.history['val_accuracy'])
@@ -500,16 +491,16 @@ class MovieDS:
             plt.savefig('results/loss_for_' + modelname + '.png')
             plt.show()
             score = model.evaluate(x_test, y_test, verbose=0)
-            print(f'Test loss: {score[0]} / Test accuracy: {score[1]}')
-            #
-            #
-            # Predictions
-            y_pred = np.argmax(model.predict(x_test), axis=-1)
+            print(f'Test loss: {score[0]} / Test ROC_AUC: {score[1]} / Test accuracy: {score[2]}')
+
+            y_pred = np.round(model.predict(x_test))
             cm = confusion_matrix(y_test, y_pred)
             disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['negative', 'positive'])
             fig, ax = plt.subplots(figsize=(15, 10))
             disp.plot(ax=ax)
-            plt.title('Confusion Matrix')
+            plt.title('Confusion Matrix for '+ modelname)
+            plt.savefig('results/conf_matrix_' + modelname + '.png')
+            plt.show()
 
         for model, modelname in zip(rnn_models, rnn_names):
             model.compile(loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
@@ -517,12 +508,12 @@ class MovieDS:
                           metrics=[tf.keras.metrics.AUC(), 'accuracy'])  # We will be checking roc_auc and accuracy
             history = model.fit(x=x_train,
                                 y=y_train,
-                                epochs=2,
+                                epochs=100,
                                 validation_data=(x_test, y_test),
                                 batch_size=64,
                                 callbacks=[early_stop, cp_callback]
                                 )
-            model_evaluation(history, modelname)
+            model_evaluation(history, modelname, model, x_test,y_test)
 
         # Pretrained embeddings
 
@@ -607,13 +598,6 @@ class MovieDS:
                                     batch_size=64,
                                     callbacks=[early_stop, cp_callback]
                                     )
-            model_evaluation(history, modelname)
+            model_evaluation(history, modelname, model, x_test, y_test)
 
 
-dataset = MovieDS('LargeMovieReviewDataset.csv')
-prep_dataset = dataset.prep(dataset.eda())  # Storing preprocessed dataset after EDA
-dataset.visualization_popular(prep_dataset)  # Visualization of popular words from preprocessed dataset
-stemming_data = dataset.stemming_wc(prep_dataset)
-# x_train, y_train, x_test, y_test = dataset.train_test_split(stemming_data)
-# dataset.liner_model(*dataset.train_test_split(stemming_data))
-dataset.rnn_models(*dataset.train_test_split(stemming_data))
